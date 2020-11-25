@@ -19,6 +19,8 @@
 #define CONST_INPUT_CLOSE 1
 #define CONST_INPUT_OPENED 0
 
+#define MOT_TRESHOLD 5000
+
 uint8_t is_DOOR_1_OPENED = CONST_INPUT_OPENED;
 uint8_t is_DOOR_1_CLOSED = CONST_INPUT_OPENED;
 uint8_t is_DOOR_2_OPENED = CONST_INPUT_OPENED;
@@ -36,10 +38,10 @@ uint8_t MASK_DOOR_2_SEPARATED = 0x0020;
 uint8_t MASK_BTN_TOGGLE_PRESSED = 0x0040;
 
 
-uint8_t is_MOT_1_OPENING = CONST_MOT_OFF;
-uint8_t is_MOT_1_CLOSING = CONST_MOT_OFF;
-uint8_t is_MOT_2_OPENING = CONST_MOT_OFF;
-uint8_t is_MOT_2_CLOSING = CONST_MOT_OFF;
+uint8_t is_MOT_1_ON = CONST_MOT_OFF;
+long time_MOT_1_STARTED = 0;
+uint8_t is_MOT_2_ON = CONST_MOT_OFF;
+long time_MOT_2_STARTED = 0;
 
 unsigned long loopCounter = 0;
 unsigned int lastValue = 0;
@@ -80,11 +82,13 @@ void setup()
     if( !is_DOOR_1_OPENED && !is_DOOR_1_CLOSED ) {
       Serial.println("Door 1 is on halfway, closing");
       digitalWrite(OUT_MOT_1_CLOSE, CONST_MOT_ON);
+      time_MOT_1_STARTED = millis();
     }
 
     if( !is_DOOR_2_OPENED && !is_DOOR_2_CLOSED ) {
       Serial.println("Door 2 is on halfway, closing");
       digitalWrite(OUT_MOT_2_CLOSE, CONST_MOT_ON);
+      time_MOT_2_STARTED = millis();
     }
   }
 
@@ -92,25 +96,43 @@ void setup()
 }
 
 
-void openMotors() {
+void openMotors(
+  uint8_t is_DOOR_1_OPENED,
+  uint8_t is_DOOR_1_CLOSED,
+  uint8_t is_DOOR_2_OPENED,
+  uint8_t is_DOOR_2_CLOSED
+) {
   Serial.println("Open motors");
   digitalWrite(OUT_MOT_1_CLOSE, CONST_MOT_OFF);
   digitalWrite(OUT_MOT_2_CLOSE, CONST_MOT_OFF);
 
-  digitalWrite(OUT_MOT_1_OPEN, CONST_MOT_ON);
-  if(!is_DOOR_2_SEPARATED) {
+  if(!is_DOOR_1_OPENED) {
+    digitalWrite(OUT_MOT_1_OPEN, CONST_MOT_ON);
+    time_MOT_1_STARTED = millis();
+  }
+  if(!is_DOOR_2_SEPARATED && !is_DOOR_2_OPENED) {
     digitalWrite(OUT_MOT_2_OPEN, CONST_MOT_ON);
+    time_MOT_2_STARTED = millis();
   }
 }
 
-void closeMotors() {
+void closeMotors(
+  uint8_t is_DOOR_1_OPENED,
+  uint8_t is_DOOR_1_CLOSED,
+  uint8_t is_DOOR_2_OPENED,
+  uint8_t is_DOOR_2_CLOSED
+) {
   Serial.println("Close motors");
   digitalWrite(OUT_MOT_1_OPEN, CONST_MOT_OFF);
   digitalWrite(OUT_MOT_2_OPEN, CONST_MOT_OFF);
   
-  digitalWrite(OUT_MOT_1_CLOSE, CONST_MOT_ON);
-  if(!is_DOOR_2_SEPARATED) {
+  if(!is_DOOR_1_CLOSED) {
+    digitalWrite(OUT_MOT_1_CLOSE, CONST_MOT_ON);
+    time_MOT_1_STARTED = millis();
+  }
+  if(!is_DOOR_2_SEPARATED && !is_DOOR_2_CLOSED) {
     digitalWrite(OUT_MOT_2_CLOSE, CONST_MOT_ON);
+    time_MOT_2_STARTED = millis();
   }
 }
 
@@ -125,9 +147,26 @@ void loop()
   is_DOOR_2_CLOSED = !digitalRead(SW_DOOR_2_CLOSE);
   is_DARK = !digitalRead(SW_LIGHT_SENSOR);
   is_BTN_TOGGLE_PRESSED = !digitalRead(BT_TOGGLE);
-  
+  is_MOT_1_ON = (digitalRead(OUT_MOT_1_OPEN) == CONST_MOT_ON) || (digitalRead(OUT_MOT_1_CLOSE) == CONST_MOT_ON);
+  is_MOT_2_ON = (digitalRead(OUT_MOT_2_OPEN) == CONST_MOT_ON) || (digitalRead(OUT_MOT_2_CLOSE) == CONST_MOT_ON);
+
+
   is_DOOR_2_SEPARATED = !digitalRead(SW_SEPARATE_2);
- 
+
+  long now = millis();
+
+  if(is_MOT_1_ON && (now - time_MOT_1_STARTED) > MOT_TRESHOLD ) {
+    Serial.println("Mot1 threshold reached");
+    digitalWrite(OUT_MOT_1_OPEN, CONST_MOT_OFF);
+    digitalWrite(OUT_MOT_1_CLOSE, CONST_MOT_OFF);
+  }
+
+  if(is_MOT_2_ON && (now - time_MOT_2_STARTED) > MOT_TRESHOLD ) {
+    Serial.println("Mot2 threshold reached");
+    digitalWrite(OUT_MOT_2_OPEN, CONST_MOT_OFF);
+    digitalWrite(OUT_MOT_2_CLOSE, CONST_MOT_OFF);
+  }
+
   unsigned int value = 
     (is_DOOR_1_OPENED * MASK_DOOR_1_OPENED)
     | (is_DOOR_1_CLOSED * MASK_DOOR_1_CLOSED)
@@ -153,18 +192,18 @@ void loop()
       if(is_DOOR_1_OPENED == CONST_INPUT_CLOSE) {
         Serial.println("Forcing to close");
         // start motors to close
-        closeMotors();
+        closeMotors(is_DOOR_1_OPENED, is_DOOR_1_CLOSED, is_DOOR_2_OPENED, is_DOOR_2_CLOSED);
       } else if(is_DOOR_1_CLOSED == CONST_INPUT_CLOSE) {
         Serial.println("Forcing to open");
         // start motors to open
-        openMotors();
+        openMotors(is_DOOR_1_OPENED, is_DOOR_1_CLOSED, is_DOOR_2_OPENED, is_DOOR_2_CLOSED);
       } else {
         if(OUT_MOT_1_OPEN) {
           Serial.println("Changing direction, closing");
-          closeMotors();
+          closeMotors(is_DOOR_1_OPENED, is_DOOR_1_CLOSED, is_DOOR_2_OPENED, is_DOOR_2_CLOSED);
         } else {
           Serial.println("Changing direction, opening");
-          openMotors();
+          openMotors(is_DOOR_1_OPENED, is_DOOR_1_CLOSED, is_DOOR_2_OPENED, is_DOOR_2_CLOSED);
         }
         // change motors direction
 
@@ -174,11 +213,11 @@ void loop()
     if(!(lv & MASK_DARK) && (lastValue & MASK_DARK)) {
       Serial.println("Getting dark");
       // start motors to close
-      closeMotors();
+      closeMotors(is_DOOR_1_OPENED, is_DOOR_1_CLOSED, is_DOOR_2_OPENED, is_DOOR_2_CLOSED);
     } else if((lv & MASK_DARK) && !(lastValue & MASK_DARK)) {
       Serial.println("Getting dawn");
       // start motors to open
-      openMotors();
+      openMotors(is_DOOR_1_OPENED, is_DOOR_1_CLOSED, is_DOOR_2_OPENED, is_DOOR_2_CLOSED);
     } 
 
     //####### Door1
